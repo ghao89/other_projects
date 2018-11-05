@@ -47,7 +47,7 @@ subtrain$browerVersion <- as.factor(unlist(lapply(subtrain$deviceList, FUN = fun
 subtrain$browerSize <- as.factor(unlist(lapply(subtrain$deviceList, FUN = function(x) x[6])))
 subtrain$operatingSystem <- as.factor(unlist(lapply(subtrain$deviceList, FUN = function(x) x[8])))
 subtrain$operatingSystemVersion <- as.factor(unlist(lapply(subtrain$deviceList, FUN = function(x) x[10])))
-subtrain$isMobile <- unlist(lapply(subtrain$deviceList, FUN = function(x) x[12]))
+subtrain$isMobile <- ifelse(trimws(unlist(lapply(subtrain$deviceList, FUN = function(x) x[12])), "both") == 'true', 1, 0)
 subtrain$mobileDeviceBranding <- as.factor(unlist(lapply(subtrain$deviceList, FUN = function(x) x[14])))
 subtrain$mobileDeviceModel <- as.factor(unlist(lapply(subtrain$deviceList, FUN = function(x) x[16])))
 subtrain$mobileInputSelector <- as.factor(unlist(lapply(subtrain$deviceList, FUN = function(x) x[18])))
@@ -65,14 +65,11 @@ subtrain <- select(subtrain, -device, -deviceList)
 ######        Subtract information from totals        ######
 ############################################################
 
-subtrain$totalList <- lapply(subtrain$totals, FUN = function(x)
-  unlist(lapply(unlist(strsplit(as.character(x), split = ",")), FUN = function(y)
-    unlist(strsplit(y, "[:]"))
-  )
-  )
-)
+subtrain$totalList <- lapply(subtrain$totals, FUN = function(x) fromJSON(as.character(x)))
 
-subtrain$visits <- unlist(lapply(subtrain$deviceList, FUN = function(x) x[2]))
-subtrain$hits <- unlist(lapply(subtrain$deviceList, FUN = function(x) x[4]))
-subtrain$pageViews <- unlist(lapply(subtrain$deviceList, FUN = function(x) x[6]))
-subtrain$newVisits <- unlist(lapply(subtrain$deviceList, FUN = function(x) x[8]))
+
+subtrain$visits <- unlist(lapply(subtrain$totalList, FUN = function(x) as.numeric(x$visits)))
+subtrain$hits <- unlist(lapply(subtrain$totalList, FUN = function(x) as.numeric(x$hits)))
+# If no pageview record, let it be 0
+subtrain$pageviews <- unlist(lapply(subtrain$totalList, FUN = function(x) ifelse(length(x$pageviews) == 0, 0, as.numeric(x$pageviews))))
+subtrain$newVisits <- unlist(lapply(subtrain$totalList, FUN = function(x) x$newVisits))
