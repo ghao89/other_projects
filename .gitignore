@@ -39,3 +39,7 @@ rsconnect/
 # Data files are too large
 /Google_Analytics_Customer_Revenue_Prediction//train.csv
 /Google_Analytics_Customer_Revenue_Prediction//test.csv
+
+#
+.DS_Store
+/*.DS_Store
