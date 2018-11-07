@@ -47,4 +47,6 @@ test <- bind_cols(test, geoNetwork, device, totals, trafficSource)
 
 proc.time() - t
 
+rm(geoNetwork, totals, trafficSource, device)
+
 save(train, test, file = "Google_Analytics_Customer_Revenue_Prediction/preprocessed.Rdata")
