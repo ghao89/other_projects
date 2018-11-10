@@ -4,7 +4,7 @@ library(jsonlite)
 
 t <- proc.time()
 
-train <- read.csv("Google_Analytics_Customer_Revenue_Prediction/train.csv")
+train <- read.csv("Google_Analytics_Customer_Revenue_Prediction/train.csv", colClasses = c(fullVisitorId = "character"))
 
 geoNetwork <- bind_rows(lapply(train$geoNetwork, FUN = function(x) fromJSON(as.character(x))))
 device <- bind_rows(lapply(train$device, FUN = function(x) fromJSON(as.character(x))))
@@ -28,7 +28,7 @@ rm(geoNetwork, totals, trafficSource, device)
 
 t <- proc.time()
 
-test <- read.csv("Google_Analytics_Customer_Revenue_Prediction/test.csv")
+test <- read.csv("Google_Analytics_Customer_Revenue_Prediction/test.csv", colClasses = c(fullVisitorId = "character"))
 
 geoNetwork <- bind_rows(lapply(test$geoNetwork, FUN = function(x) fromJSON(as.character(x))))
 device <- bind_rows(lapply(test$device, FUN = function(x) fromJSON(as.character(x))))
