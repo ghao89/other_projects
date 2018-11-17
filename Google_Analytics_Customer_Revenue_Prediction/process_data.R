@@ -111,10 +111,3 @@ test$adContent <- as.factor(test$adContent)
 #------------- Save the intermediate step train and test -------------#
 
 save(train, test, file = "Google_Analytics_Customer_Revenue_Prediction/intermediate.Rdata")
-
-#------------- Take a subsample to explore -------------#
-subtrain <- data.frame(train[sample(nrow(train), 10000), ])
-visitNum <- aggregate(subtrain$visitNumber, by = list(subtrain$fullVisitorId), FUN = function(x) length(x))
-maxVisitNum <- aggregate(subtrain$visitNumber, by = list(subtrain$fullVisitorId), FUN = function(x) max(x))
-
-totalRevenue <- aggregate(train$transactionRevenue, by = list(train$fullVisitorId), sum)
