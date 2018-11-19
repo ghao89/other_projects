@@ -1,5 +1,6 @@
 library(dplyr)
 library(ggplot2)
+library(forcats)
 
 load(file = "Google_Analytics_Customer_Revenue_Prediction/preprocessed.Rdata")
 
@@ -10,6 +11,10 @@ const_col_names <- colnames(train)[const_col]
 train <- select(train, -const_col_names)
 test <- select(test, -const_col_names)
 
+
+#------------- Columns with NA's-------------#
+na_col <- which(apply(train, 2, FUN = function(x) sum(is.na(x)) != 0))
+na_col_names <- colnames(train)[na_col]
 
 #------------- Drop the columns that contained in train but not in test (except transactionRevenue)-------------#
 diff_col <- colnames(train)[!colnames(train) %in% c(colnames(test), "transactionRevenue")]
@@ -47,66 +52,80 @@ test$newVisits <- unlist(lapply(test$newVisits, FUN = function(x)
   ifelse(is.na(x), 0, as.numeric(x))))
 
 
-#------------- Convert necessary columns into characters of factors -------------#
-train$continent <- as.factor(train$continent)
-test$continent <- as.factor(test$continent)
+#------------- Convert necessary columns from characters to factors -------------#
+train$continent <- fct_explicit_na(train$continent, "We don't know!")
+test$continent <- fct_explicit_na(test$continent, "We don't know!")
 
-train$subContinent <- as.factor(train$subContinent)
-test$subContinent <- as.factor(test$subContinent)
+train$subContinent <- fct_explicit_na(train$subContinent, "We don't know!")
+test$subContinent <- fct_explicit_na(test$subContinent, "We don't know!")
 
-train$country <- as.factor(train$country)
-test$country <- as.factor(test$country)
+train$country <- fct_explicit_na(train$country, "We don't know!")
+test$country <- fct_explicit_na(test$country, "We don't know!")
 
-train$region <- as.factor(train$region)
-test$region <- as.factor(test$region)
+train$region <- fct_explicit_na(train$region, "We don't know!")
+test$region <- fct_explicit_na(test$region, "We don't know!")
 
-train$city <- as.factor(train$city)
-test$city <- as.factor(test$city)
+train$city <- fct_explicit_na(train$city, "We don't know!")
+test$city <- fct_explicit_na(test$city, "We don't know!")
 
-train$metro <- as.factor(train$metro)
-test$metro <- as.factor(test$metro)
+train$metro <- fct_explicit_na(train$metro, "We don't know!")
+test$metro <- fct_explicit_na(test$metro, "We don't know!")
 
-train$medium <- as.factor(train$medium)
-test$medium <- as.factor(test$medium)
+train$medium <- fct_explicit_na(train$medium, "We don't know!")
+test$medium <- fct_explicit_na(test$medium, "We don't know!")
 
-train$networkDomain <- as.factor(train$networkDomain)
-test$networkDomain <- as.factor(test$networkDomain)
+train$networkDomain <- fct_explicit_na(train$networkDomain, "We don't know!")
+test$networkDomain <- fct_explicit_na(test$networkDomain, "We don't know!")
 
-train$browser <- as.factor(train$browser)
-test$browser <- as.factor(test$browser)
+train$browser <- fct_explicit_na(train$browser, "We don't know!")
+test$browser <- fct_explicit_na(test$browser, "We don't know!")
 
-train$operatingSystem <- as.factor(train$operatingSystem)
-test$operatingSystem <- as.factor(test$operatingSystem)
+train$operatingSystem <- fct_explicit_na(train$operatingSystem, "We don't know!")
+test$operatingSystem <- fct_explicit_na(test$operatingSystem, "We don't know!")
 
-train$deviceCategory <- as.factor(train$deviceCategory)
-test$deviceCategory <- as.factor(test$deviceCategory)
+train$deviceCategory <- fct_explicit_na(train$deviceCategory, "We don't know!")
+test$deviceCategory <- fct_explicit_na(test$deviceCategory, "We don't know!")
 
-train$campaign <- as.factor(train$campaign)
-test$campaign <- as.factor(test$campaign)
+train$campaign <- fct_explicit_na(train$campaign, "We don't know!")
+test$campaign <- fct_explicit_na(test$campaign, "We don't know!")
 
-train$source <- as.factor(train$source)
-test$source <- as.factor(test$source)
+train$source <- fct_explicit_na(train$source, "We don't know!")
+test$source <- fct_explicit_na(test$source, "We don't know!")
 
-train$keyword <- as.factor(train$keyword)
-test$keyword <- as.factor(test$keyword)
+train$keyword <- fct_explicit_na(train$keyword, "We don't know!")
+test$keyword <- fct_explicit_na(test$keyword, "We don't know!")
 
-train$referralPath <- as.factor(train$referralPath)
-test$referralPath <- as.factor(test$referralPath)
+train$referralPath <- fct_explicit_na(train$referralPath, "We don't know!")
+test$referralPath <- fct_explicit_na(test$referralPath, "We don't know!")
 
-train$page <- as.factor(train$page)
-test$page <- as.factor(test$page)
+train$page <- fct_explicit_na(train$page, "We don't know!")
+test$page <- fct_explicit_na(test$page, "We don't know!")
 
-train$slot <- as.factor(train$slot)
-test$slot <- as.factor(test$slot)
+train$slot <- fct_explicit_na(train$slot, "We don't know!")
+test$slot <- fct_explicit_na(test$slot, "We don't know!")
 
-train$gclId <- as.factor(train$gclId)
-test$gclId <- as.factor(test$gclId)
+train$gclId <- fct_explicit_na(train$gclId, "We don't know!")
+test$gclId <- fct_explicit_na(test$gclId, "We don't know!")
 
-train$adNetworkType <- as.factor(train$adNetworkType)
-test$adNetworkType <- as.factor(test$adNetworkType)
+train$adNetworkType <- fct_explicit_na(train$adNetworkType, "We don't know!")
+test$adNetworkType <- fct_explicit_na(test$adNetworkType, "We don't know!")
 
-train$adContent <- as.factor(train$adContent)
-test$adContent <- as.factor(test$adContent)
+train$adContent <- fct_explicit_na(train$adContent, "We don't know!")
+test$adContent <- fct_explicit_na(test$adContent, "We don't know!")
+
+#------------- Columns with NA's-------------#
+na_col <- which(apply(train, 2, FUN = function(x) sum(is.na(x)) != 0))
+na_col_names <- colnames(train)[na_col]
+# "isTrueDirect" and "isVideoAd"
+
+#------------- Convert necessary columns from logical to factors -------------#
+logical_col <- which(sapply(train, typeof) == "logical")
+logical_col_names <- colnames(train)[logical_col]
+
+for (name in logical_col_names) {
+  train[, name] <- fct_explicit_na(factor(train[, name]), "We don't know!")
+  test[, name] <- fct_explicit_na(factor(test[, name]), "We don't know!")
+}
 
 #------------- Save the intermediate step train and test -------------#
 
