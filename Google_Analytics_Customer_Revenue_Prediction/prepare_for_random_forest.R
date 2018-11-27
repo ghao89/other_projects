@@ -43,24 +43,22 @@ test <- select(test, -factor_names)
 #----------RandomForest tryout----------#
 
 x <- select(train, -transactionRevenue, -y, -fullVisitorId)
+x <- data.frame(sapply(x, FUN = function(x) x/max(x)))
 y <- train$transactionRevenue
 
-te_x <- select(test, -y, -fullVisitorId)
-te_x$fullVisitorId_x <- ifelse(is.na())
-
-nrow_tr <- nrow(train)
 num_epoch <- 1
 batch_size <- 25000
+val_size <- nrow(train) - 30*batch_size
 
-val_x <- nrow_tr %% batch_size
-tr_x <- select(train, -transactionRevenue, -y)
-tr_y <- train$transactionRevenue
+val_idx <- sample(nrow(train), val_size, replace = F)
 
-tr_x <- data.frame(sapply(tr_x, FUN = function(x) x/max(x)))
+val_x <- x[val_idx, ]
+val_y <- y[val_idx]
+
+tr_x <- x[-val_idx, ]
+tr_y <- y[-val_idx]
 
 nr <- nrow(tr_x)
-num_epoch <- 1
-batch_size <- 25000
 
 batch_x <- tr_x[1:batch_size, ]
 batch_y <- tr_y[1:batch_size]
@@ -70,7 +68,7 @@ rf_all <- randomForest(x = batch_x,
 
 for (j in 1:num_epoch) {
   i <- ifelse(j == 1, 1, 0)
-  while((i + 1)*batch_size < nr) {
+  while((i + 1)*batch_size <= nr) {
     batch_x <- tr_x[i*batch_size + (1:batch_size),]
     batch_y <- tr_y[i*batch_size + (1:batch_size)]
     rf_batch <- randomForest(x = batch_x,
@@ -80,15 +78,19 @@ for (j in 1:num_epoch) {
     print(i)
     i <- i + 1
   }
-  
-  batch_x <- tr_x[(i*batch_size + 1):nr, ]
-  batch_y <- tr_y[(i*batch_size + 1):nr]
-  rf_batch <- randomForest(x = batch_x,
-                           y = batch_y,
-                           ntree = 50)
-  rf_all <- randomForest::combine(rf_all, rf_batch)
+  # 
+  # batch_x <- tr_x[(i*batch_size + 1):nr, ]
+  # batch_y <- tr_y[(i*batch_size + 1):nr]
+  # rf_batch <- randomForest(x = batch_x,
+  #                          y = batch_y,
+  #                          ntree = 50)
+  # rf_all <- randomForest::combine(rf_all, rf_batch)
 
 }
+
+#------------
+te_x <- select(test, -y, -fullVisitorId)
+te_x$fullVisitorId_x <- ifelse(is.na())
 
 test$fullVisitorId_x
 
