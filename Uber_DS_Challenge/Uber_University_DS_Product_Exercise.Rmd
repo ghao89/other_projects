@@ -108,6 +108,53 @@ ON de.trip_id = ti.trip_id;
 * Since a trip will only ever result in a single cancel event or it will be completed, the new table *dispatch_events* cannot contain a row with *cancel_ts* and *complete_ts* being non-null at the same time.
 
 
+
+
+
+# Modeling
+
+## Part A
+
+```{r load_packages, eval=TRUE, echo=TRUE, message=FALSE}
+library(dplyr)
+```
+
+```{r}
+# Read in data
+dat <- read.csv(file = "Product Data Set.csv",
+                stringsAsFactors = FALSE)
+
+# Check number of data entries and features
+dim(dat)
+
+# Screen out those entries where signup is NA
+dat <- dat[!is.na(dat$signup_timestamp), ]
+
+# Count number of NA's in each feature
+for (name in names(dat)) {
+  num_na <- sum(is.na(dat[, colnames(dat) == name]))
+  print(paste0("Number of NA's in ", name, " is ", num_na))
+}
+
+
+# Check if there's any id that signs up multiple times
+id_rep_num <- aggregate(dat$id, by = list(dat$id), length)
+
+id_rep <- id_rep_num$
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
   
   
 
