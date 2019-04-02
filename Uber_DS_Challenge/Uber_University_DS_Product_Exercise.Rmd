@@ -105,11 +105,82 @@ FROM dispatch_events AS de
 LEFT JOIN trip_initiated AS ti
 ON de.trip_id = ti.trip_id;
 ```
-* Since a trip will only ever result in a single cancel event or it will be completed, the new table *dispatch_events* cannot contain a row with *cancel_ts* and *complete_ts* being non-null at the same time.
+* Since a trip will only ever result in a single cancel event or it will be completed, the new table *dispatch_events* cannot contain a row with *cancel_ts* and *complete_ts* being non-null at the same time. As for the result of the chunk of code below, the *num_invalid_row* should be $0$. 
+```{sql eval = FALSE, echo = TRUE}
+SELECT SUM(
+  CASE NOT ((cancel_ts IS NULL AND complete_ts IS NOT NULL) 
+        OR (cancel_ts IS NOT NULL AND complete_ts IS NULL))
+  WHEN TRUE THEN 1
+  ELSE 0
+  END
+) AS num_invalid_row
+FROM dispatch_events;
+```
+
+# Experimental Design
+
+## Part A
+
+### 1.
+The primary success metric of the test could be the *average availability*, defined as the number of available drivers within a certain radius when a rider first open the app.
+
+A few tracking metrics could be
+
+  * *Available percentage*, defined as the percentage of riders with available driver(s) within a certain radius when first open the app, among all riders.
+  
+  * *Average trip completed*, defined as the average number of trips completed.
+  
+  * *Average ETA*, defined as the average estimated time of arrival for each rider upon requesting a ride.
+
+The metrics mentioned above are all calculated within the time window 4:00 pm - 8:00 pm.
+
+### 2.
+
+To evaluate the effect of the incentive, I'm planning to give out the incentive to drivers based on geographical areas to avoid geographical interference. 
+
+* Conduct simulation study to get a baseline effect.
+
+* I will partition the selected areas into two groups, control group and treatment group. 
+
+* A short period, say, a week, prior to the experimentation, will be used to determine for each driver, whether or not she drives mainly within a certain area, and if so, which area it is.
+
+* Then, for a consecutive period of time, say, two weeks, no incentives are given and the metrics are calculated for each area.
+
+* Then, all drivers driving mainly within treatment group of areas are all given incentives. The metrics are calculated for a same amount of time (two weeks).
+
+* Perform a difference-in-difference (DID) analysis, to evaluate the effect of the incentive.
 
 
+#### 2a.
 
+One critical statistical rigor that should be considered is the tradeoff between bias and variance. For this case, if the areas we choose are high-level large areas, then the bias will be relatively low but the variance might be high; on the other hand, if those areas are too small, the the variance will be small but bias is likely to be high. 
 
+To balance with this, the rollout schedule could be
+
+* Start with large areas, like metropolitan areas, perform the experiment, evaluate the effect and access bias and variance (compare to the baseline obtained from simulation)
+
+* Each stage further, nesting from previous areas into smaller ones, perform the experiment, evaluate the effect and access bias and variance. Stop when bias and variance are both within reasonable range.
+
+#### 2b.
+
+The type of data analysis I'm considering is Difference-in-difference (DID). Such method can eliminate the effect of time trend while controlling for other demographics. The method is performed by regressing the calculated metrics value against three major indicators together with other covariates like area demographics.
+$$
+  \mathrm{value \ of \ metric} \sim 1(\mathrm{control \ group}) + 1(\mathrm{before\ experiment}) + 1(\mathrm{control \ group})*1(\mathrm{before\ experiment}) + X,
+$$
+The estimated coefficient of the product term indicates the effect of the incentive, and the statistical significance stands for its significance.
+
+## Part B
+
+THe metric I would use is the number of new signups each day. I'm not using the new drivers who starts a first trip, as this is not the pool of all drivers attracted to Uber, and also there's a time lag between signup and the first trip.
+
+To evaluate the effect of the campaign, we need another city as control group, and the control group city should be geographically far enough to the city under campaign. Start from a few days before the campaign (around same number of days as the duration of the campaign), till the day that the campaign ends, the number of new signups on each day for each city is calculated. Then, we can use a Difference-in-difference method similar to that in Part A. Regressing the value of metric against three major indicators together with other covariates like city demographics.
+$$
+  \mathrm{value \ of \ metric} \sim 1(\mathrm{control \ group}) + 1(\mathrm{before\ experiment}) + 1(\mathrm{control \ group})*1(\mathrm{before\ experiment}) + X,
+$$
+The effect and the significance of the campaign is reflected by the estimated coefficient of the product term 
+$$
+1(\mathrm{control \ group})*1(\mathrm{before\ experiment}).
+$$
 
 # Modeling
 
@@ -117,36 +188,423 @@ ON de.trip_id = ti.trip_id;
 
 ```{r load_packages, eval=TRUE, echo=TRUE, message=FALSE}
 library(dplyr)
+library(ggplot2)
+library(randomForest)
+library(ROCR)
+library(rpart)
+library(caTools)
+
+min_category_size <- 30
 ```
 
-```{r}
+```{r cleaning and preprocessing, eval = TRUE, echo=TRUE, }
 # Read in data
 dat <- read.csv(file = "Product Data Set.csv",
                 stringsAsFactors = FALSE)
 
 # Check number of data entries and features
-dim(dat)
+print(paste0("There are ", nrow(dat), " data entries, ", ncol(dat), " features."))
 
 # Screen out those entries where signup is NA
 dat <- dat[!is.na(dat$signup_timestamp), ]
 
 # Count number of NA's in each feature
+# Store the features with no NA's at all, used later 
+
+feature_no_na <- NULL
 for (name in names(dat)) {
   num_na <- sum(is.na(dat[, colnames(dat) == name]))
+  if (num_na == 0) {
+    feature_no_na <- c(feature_no_na, name)
+  }
   print(paste0("Number of NA's in ", name, " is ", num_na))
 }
+print(feature_no_na)
 
-
-# Check if there's any id that signs up multiple times
+# Check if there's any id with repeated signups
 id_rep_num <- aggregate(dat$id, by = list(dat$id), length)
+id_rep <- id_rep_num$Group.1[id_rep_num$x > 1]
+print(paste0("There are ", length(id_rep), " id's with repeated signups."))
 
-id_rep <- id_rep_num$
+# Select the data with same id signs up multiple times
+dat_rep <- slice(dat, which(dat$id %in% id_rep))
+feature_no_na <- feature_no_na[which(!feature_no_na %in% c("id", "signup_timestamp"))]
+
+# For each id that signs up multiple times, check
+# If those features with no NA's are identical
+# If true, then select the most informative entry (minimum number of NA's) and remove others;
+# If false, then keep each entry
+
+for (id in id_rep) {
+  idx <- which(dat_rep$id == id)
+  feature_all_same <- TRUE
+  for (feature in feature_no_na) {
+    feature_all_same <- feature_all_same && (length(unique(select(slice(dat_rep, idx), feature))) == 1)
+  }
+  if (feature_all_same) {
+    num_na <- apply(slice(dat_rep, idx), 1, FUN = function(x) sum(is.na(x)))
+    temp <- slice(slice(dat_rep, idx), which.min(num_na))
+    dat_rep <- dat_rep[-idx, ]
+    dat_rep <- rbind.data.frame(dat_rep, temp)
+  }
+}
+
+dat <- rbind(slice(dat, which(!dat$id %in% id_rep)),
+             dat_rep)
+
+# Set those drivers who took a first trip within 30 days of signing up to 1, others to 0
+dat$label <- 0
+idx_take_trip <- which(!is.na(dat$first_completed_trip_timestamp))
+dat$label[idx_take_trip] <- 
+  sapply(idx_take_trip,
+         FUN = function(x)
+           as.numeric(difftime(as.POSIXct(gsub('T', ' ', 
+                                               gsub('Z', '', dat$first_completed_trip_timestamp[x]))), 
+                               as.POSIXct(gsub('T', ' ', 
+                                               gsub('Z', '', dat$signup_timestamp[x]))),
+                               units = "days")) < 30)
+
+fraction <- sum(dat$label == 1)/nrow(dat)
+```
+
+After we remove all entries with no signups and properly deal with same id signing up multiple times, we can calculate the fraction of driver signups took a first trip within $30$ days of signing up is `r fraction`.
+
+```{r convert timestamps into numeric variables, eval = TRUE, echo = TRUE}
+
+# The time difference (in days) between signup date and 2017-07-01 00:00:00
+dat$signup_timestamp_numeric <- 
+  sapply(dat$signup_timestamp,
+         FUN = function(x)
+           as.numeric(difftime(as.POSIXct(gsub('T', ' ', gsub('Z', '', x))),
+                               as.POSIXct("2017-07-01 00:00:00"),
+                               units = "days")))
+
+# The time difference (in days) between bgc date and signup date (for those bgc_timestamp not NA)
+dat$diff_bgc_signup <- NA
+idx_bgc_dat_not_na <- which(!is.na(dat$bgc_date))
+dat$diff_bgc_signup[idx_bgc_dat_not_na] <- 
+  sapply(idx_bgc_dat_not_na,
+         FUN = function(x)
+           as.numeric(difftime(as.POSIXct(gsub('T', ' ', gsub('Z', '', dat$bgc_date[x]))), 
+                               as.POSIXct(gsub('T', ' ', gsub('Z', '', dat$signup_timestamp[x]))),
+                               units = "days")))
+
+# The time difference (in days) between vehicle added date and signup date 
+# (for those vehicle_added_date not NA)
+dat$diff_vehicle_added_signup <- NA
+idx_vehicle_added_dat_not_na <- which(!is.na(dat$vehicle_added_date))
+dat$diff_vehicle_added_signup[idx_vehicle_added_dat_not_na] <-
+  sapply(idx_vehicle_added_dat_not_na,
+         FUN = function(x)
+           as.numeric(difftime(as.POSIXct(gsub('T', ' ', gsub('Z', '', dat$vehicle_added_date[x]))), 
+                               as.POSIXct(gsub('T', ' ', gsub('Z', '', dat$signup_timestamp[x]))),
+                               units = "days")))  
+```
+
+```{r exploratory analysis city, echo=TRUE, eval=TRUE}
+# Fraction of target within each city
+dat$city_name <- factor(dat$city_name)
+agg_city_name <- aggregate(dat$label, 
+                           by = list(dat$city_name),
+                           FUN = function(x)
+                             sum(x == 1)/length(x))
+colnames(agg_city_name) <- c("city_name", "fraction")
+
+p <- ggplot(data = agg_city_name, aes(x = city_name, y = fraction, fill = city_name)) + ylim(0, 0.6)
+p + geom_bar(stat = "identity") + ggtitle("Fraction within each city")
+```
+The plot shows no big difference among fractions of targets within each city.
+
+```{r exploratory analysis signup os, echo=TRUE, eval=TRUE}
+# Fraction of target for each signup os (including NA)
+dat$signup_os[is.na(dat$signup_os)] <- "Not Available" 
+dat$signup_os <- factor(dat$signup_os)
+agg_signup_os <- aggregate(dat$label,
+                           by = list(dat$signup_os),
+                           FUN = function(x)
+                             sum(x == 1)/length(x))
+colnames(agg_signup_os) <- c("signup_os", "fraction")
+
+p <- ggplot(data = agg_signup_os, aes(x = signup_os, y = fraction, fill = signup_os))
+p + geom_bar(stat = "identity") + ggtitle("Fraction for each signup os")
+```
+
+Fraction of targets has no big difference among different signup os.
+
+```{r exploratory analysis signup channel, echo=TRUE, eval=TRUE}
+# Fraction of target for each signup channel (including NA)
+dat$signup_channel[is.na(dat$signup_channel)] <- "Not Available" 
+
+agg_signup_channel <- aggregate(dat$label,
+                                by = list(dat$signup_channel),
+                                FUN = function(x)
+                                  sum(x == 1)/length(x))
+colnames(agg_signup_channel) <- c("signup_channel", "fraction")
+
+p <- ggplot(data = agg_signup_channel, aes(x = signup_channel, y = fraction, fill = signup_channel))
+p + geom_bar(stat = "identity") + ggtitle("Fraction for each signup channel")
+
+dat$signup_channel[dat$signup_channel != "Referral"] <- "Others"
+dat$signup_channel <- factor(dat$signup_channel)
+```
+Fraction of targets among those signing up through referral is much higher than others. 
+
+```{r exploratory analysis vehicle make, echo=TRUE, eval=TRUE}
+# Group makes that have too few data entries together
+
+dat$vehicle_make[is.na(dat$vehicle_make)] <- "Not Available"
+agg_vehicle_make_count <- aggregate(dat$label,
+                                    by = list(dat$vehicle_make),
+                                    FUN = function(x)
+                                      length(x))
+colnames(agg_vehicle_make_count) <- c("vehicle_make", "count")
+
+idx_major_make <- which(agg_vehicle_make_count$count >= min_category_size)
+major_make <- agg_vehicle_make_count$vehicle_make[idx_major_make]
+
+# Fraction of target for each vehicle make (including NA)
+dat$vehicle_make <- factor(dat$vehicle_make, exclude = "")
+agg_vehicle_make <- aggregate(dat$label,
+                              by = list(dat$vehicle_make),
+                              FUN = function(x)
+                                sum(x == 1)/length(x))
+colnames(agg_vehicle_make) <- c("vehicle_make", "fraction")
+
+top_ten_vehicle_make <- top_n(agg_vehicle_make, 10)
+p <- ggplot(data = top_ten_vehicle_make, aes(x = vehicle_make, y = fraction, fill = vehicle_make))
+p + geom_bar(stat = "identity") + ggtitle("Fraction for each vehicle make (top 10)")
+
+dat$make_cat <- "mid"
+
+make_high <- agg_vehicle_make$vehicle_make[agg_vehicle_make$fraction >= 0.6]
+make_low <- agg_vehicle_make$vehicle_make[agg_vehicle_make$fraction <= 0.5]
+
+dat$make_cat[dat$vehicle_make %in% make_high & dat$vehicle_make %in% major_make] <- "high"
+dat$make_cat[dat$vehicle_make %in% make_low & dat$vehicle_make %in% major_make] <- "low"
+
+dat$make_cat <- factor(dat$make_cat)
+```
+
+Driver signups with certain make of vehicle have higher chance to start a trip within 30 days of signing up. Since there are too many makes (categories), but the data size is not big enough so many categories have only few data entries. I regroup the makes into $3$ different categories based on their fractions. Ideally, this step could be avoided when data is large enough.
+
+```{r exploratory analysis vehicle model, echo=TRUE, eval=TRUE}
+# # Group models that have too few data entries together
+agg_vehicle_model_count <- aggregate(dat$label,
+                                    by = list(dat$vehicle_model),
+                                    FUN = function(x)
+                                      length(x))
+colnames(agg_vehicle_model_count) <- c("vehicle_model", "count")
+
+idx_major_model <- which(agg_vehicle_model_count$count >= min_category_size)
+major_model <- agg_vehicle_model_count$vehicle_model[idx_major_model]
+
+# Fraction of target for each vehicle model
+dat$vehicle_model <- factor(dat$vehicle_model, exclude = "")
+agg_vehicle_model <- aggregate(dat$label,
+                              by = list(dat$vehicle_model),
+                              FUN = function(x)
+                                sum(x == 1)/length(x))
+colnames(agg_vehicle_model) <- c("vehicle_model", "fraction")
+
+top_ten_major_model <- top_n(agg_vehicle_model[agg_vehicle_model$vehicle_model %in% major_model, ], 10)
+p <- ggplot(data = top_ten_major_model, aes(x = vehicle_model, y = fraction, fill = vehicle_model))
+p + geom_bar(stat = "identity") + ggtitle("Fraction for each vehicle model (top 10)")
+
+dat$model_cat <- "mid"
+
+model_high <- agg_vehicle_model$vehicle_model[agg_vehicle_model$fraction >= 0.6]
+model_low <- agg_vehicle_model$vehicle_model[agg_vehicle_model$fraction <= 0.5]
+
+dat$model_cat[dat$vehicle_model %in% model_high & dat$vehicle_model %in% major_model] <- "high"
+dat$model_cat[dat$vehicle_model %in% model_low & dat$vehicle_model %in% major_model] <- "low"
+
+dat$model_cat <- factor(dat$model_cat)
 
 ```
 
+Driver signups with certain model of vehicle have higher chance to start a trip within 30 days of signing up. Similarly, I regroup the makes into $3$ different categories based on their fractions. Ideally, this step could be avoided when data is large enough.
+
+```{r exploratory analysis vehicle year, echo=TRUE, eval=TRUE}
+# Combine the vehicle years with too few data entries together
+agg_vehicle_year_count <- aggregate(dat$label,
+                                    by = list(dat$vehicle_year),
+                                    FUN = function(x)
+                                      length(x))
+colnames(agg_vehicle_year_count) <- c("vehicle_year", "count")
+agg_vehicle_year_count$vehicle_year[which(agg_vehicle_year_count$count < min_category_size)]
+agg_vehicle_year_count$count[which(agg_vehicle_year_count$count < min_category_size)]
+
+dat$vehicle_year[which(dat$vehicle_year < 1997)] <- 1997
+dat$vehicle_year[which(dat$vehicle_year == 2018)] <- 2017
+
+# Fraction of target for each vehicle year
+agg_vehicle_year <- aggregate(dat$label,
+                              by = list(dat$vehicle_year),
+                              FUN = function(x)
+                                sum(x == 1)/length(x))
+
+colnames(agg_vehicle_year) <- c("vehicle_year", "fraction")
+p <- ggplot(data = agg_vehicle_year, aes(x = vehicle_year, y = fraction, fill = vehicle_year))
+p <- p + geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+p + ggtitle("Fraction for each vehicle year")
+ 
+# A logistic regression
+lr_vehicle_year <- glm(data = dat, label~vehicle_year, family = binomial)
+summary(lr_vehicle_year)
+```
+
+In general, fraction of target increases when the vehicle is newer. It can be seen from both the plot and the summary of a logistic regression, where the coefficient of the vehicle year is positive and significant.
+
+```{r exploratory analysis signup time, echo=TRUE, eval=TRUE}
+# The effect of the signup timestamp to the fraction of target using a logistic regression)
+lr_signup <- glm(data = dat, label ~ signup_timestamp_numeric, family = binomial)
+summary(lr_signup)
+```
+
+When the driver signed up seems to have no big impact to whether they would take a first trip within $30$ days. It can be seen from the logistic regression that the slope is close to $0$ and insignificant.
+
+```{r exploratory analysis bgc, echo=TRUE, eval=TRUE}
+# The effect of the time difference betweeen bgc and signup to the fraction of target 
+# using a logistic regression
+lr_bgc <- glm(data = dat, label ~ diff_bgc_signup, family = binomial)
+summary(lr_bgc)
+
+# Categorize the contiuous lag into 3 categories
+idx_long <- dat$diff_bgc_signup > 20 & !is.na(dat$diff_bgc_signup)
+idx_mid <- dat$diff_bgc_signup > 10 & dat$diff_bgc_signup <= 20 & !is.na(dat$diff_bgc_signup)
+idx_short <- !(idx_long | idx_mid)
+dat$diff_bgc_cat <- NA
+dat$diff_bgc_cat[idx_long] <- "long"
+dat$diff_bgc_cat[idx_mid] <- "mid"
+dat$diff_bgc_cat[idx_short] <- "short"
+dat$diff_bgc_cat  <- factor(dat$diff_bgc_cat)
+
+```
+
+The result of the logistic regression suggests that in general, the chance of a driver to take a trip within $30$ days of signing up decreases as the time lag between background check date and signing up date increases. Since the majority of the time lag is less than 10 days, I manually categorize the feature into $3$ categories.
+
+```{r exploratory analysis vehicle added date, echo=TRUE, eval=TRUE}
+# The effect of the bgc timestamp to the fraction of target using a logistic regression
+lr_vehicle_added <- glm(data = dat, label ~ diff_vehicle_added_signup, family = binomial)
+summary(lr_vehicle_added)
+
+idx_long <- dat$diff_vehicle_added_signup > 5 & !is.na(dat$diff_vehicle_added_signup)
+
+dat$diff_veh_cat <- "short"
+dat$diff_veh_cat[idx_long] <- "long"
+
+dat$diff_veh_cat  <- factor(dat$diff_veh_cat)
+
+```
+
+Similarly, with a negative and significant slope, the result of the logistic regression suggests that in general, the chance of a driver to take a trip within $30$ days of signing up decreases as the time lag between vehicle information upload date and signing up date increases. I also manually categorize this feature into $3$ categories for a similar reason above.
+
+## Part B
+
+To build a model to help determine if a driver will start a first trip within the first $30$ days of signing up, we first select all the features that show prediveness from the exploratory analysis, and split the data into training data and testing data.
+```{r dat split, echo = TRUE, eval = TRUE}
+set.seed(1234)
+
+# Keep the features that are informative based on our exploratory analysis
+dat <- select(dat, label, signup_channel, vehicle_year, diff_bgc_cat, make_cat, model_cat, diff_veh_cat)
+
+# Centralize and scale vehicle year
+dat$vehicle_year <- (dat$vehicle_year - min(dat$vehicle_year))/(max(dat$vehicle_year) - min(dat$vehicle_year))
+
+dat$label <- factor(dat$label)
+
+# Split the data into training data and testing data
+tr_idx <- sample.split(dat$label, 0.75)
+train <- dat[tr_idx, ]
+test <- dat[!tr_idx, ]
+```
 
 
+The first model we consider is a logistic regression (LR) model.
+```{r logistic regression, echo=TRUE, eval=TRUE}
+lr <- glm(data = train, label ~ ., family = binomial)
+summary(lr)
 
+
+pred_lr <- predict(lr, newdata = test, type = "response")
+lr_acc <- sum(1*(pred_lr >= 0.5) == test$label)/length(pred_lr)
+print(paste0("The accuracy of logistic regression on test data is ", lr_acc, "."))
+
+roc_lr <- prediction(pred_lr, test$label)
+lr_perf <- performance(roc_lr, "tpr", "fpr")
+plot(lr_perf, main = "ROC curve")
+auc_lr_perf <- performance(roc_lr, measure = "auc")
+print(paste0("The AUC (area under the curve) is ", auc_lr_perf@y.values[[1]], "."))
+
+```
+
+The predictive accuracy of logistic regression is `r lr_acc`, and the AUC (area under the curve) is `r auc_lr_perf@y.values[[1]]`. Both results show that the LR model has certain predictiveness, but not so impressive. 
+
+From the summary of the LR model, we can see that
+
+* the time lag between vehicle information uploaded and the signingup
+
+* the time lag between the background check and the signing up
+
+* if a driver is referred
+
+* vehicle model
+
+* vehicle year
+
+all show certain predictiveness.
+
+
+Then we consider a decision tree (DT). We have quite a few categorical features in the data, and the DT model has the flexibility to incorporate those categorical data by splitting.
+```{r eval = TRUE, echo = TRUE}
+# Decision tree
+tree <- rpart(as.factor(label) ~ .,
+              data = train,
+              method = "class",
+              control = rpart.control(cp = 0.0001))
+
+plotcp(tree)
+tree_pruned <- prune(tree, cp = tree$cptable[which.min(tree$cptable[,4]), 1])
+
+tree_pruned$variable.importance
+
+pred <- predict(tree_pruned, newdata = select(test, -label), type = "class")
+tree_acc <- sum(pred == test$label)/nrow(test)
+
+pred_tree <- predict(tree_pruned, newdata = select(test, -label), type = "prob")
+roc_tree <- prediction(pred_tree[, 2], test$label)
+tree_perf <- performance(roc_tree, "tpr", "fpr")
+plot(tree_perf, main = "ROC curve")
+auc_tree_perf <- performance(roc_tree, measure = "auc")
+print(paste0("The AUC (area under the curve) is ", auc_tree_perf@y.values[[1]], "."))
+```
+
+The predictive accuracy of logistic regression is `r tree_acc`, and the AUC (area under the curve) is `r auc_tree_perf@y.values[[1]]`. Both results show that the DT model has certain predictiveness, but still not very impressive. 
+
+Based on the output of variable importance of the DT model, we can see that the features based on importance from high to low are
+
+* if a driver is referred
+
+* the time lag between the background check and the signing up
+
+* the time lag between vehicle information uploaded and the signingup
+
+* vehicle model
+
+* vehicle year
+
+* vehicle make.
+
+Both model I chose perform not quite good. In my opinion, two important things that may affect the model performance is the data size and the categorical features. The data size is too small, comparing to the number of categories in the data. That makes many categories containing too few data entries, which makes many splits effectlessly. I also consider creating dummy variable using one hot coding and using a random forest (RF) model, which has the ability to gain prediveness from many weak learners (trees). However, the performance is similar without too much gain. Besides, the data lack demographics of the drivers. Those information may help boost the predictiveness.
+
+
+## Part 3 
+
+Though not very predictive, from the models above, we can still generate a few insights.
+
+* Uber should encourage current drivers to refer potential drivers.
+
+* Uber should try to remind drivers who have signed up to consent to background check and upload vehicle information.
 
 
 
